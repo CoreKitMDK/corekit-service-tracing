@@ -1,0 +1,126 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: internal-tracing-broker-nats-config
+data:
+  nats.conf: |
+    # Basic NATS Server Configuration
+    server_name: "nats-server"
+    host: 0.0.0.0
+    port: 4222
+    
+    # HTTP monitoring port
+    http: 8222
+    
+    # Logging
+    debug: false
+    trace: false
+    logtime: true
+    
+    # Security (optional - remove if not needed)
+    authorization {
+      user: internal-tracing-broker
+      password: internal-tracing-broker
+      timeout: 2
+    }
+    
+    # Cluster configuration
+    cluster {
+      port: 6222
+      name: "internal-tracing-broker-nats-cluster",
+      #routes = [
+      #  "nats://internal-tracing-broker:internal-tracing-broker@internal-tracing-broker-nats-0.internal-tracing-broker-nats:6222",
+      #  "nats://internal-tracing-broker:internal-tracing-broker@internal-tracing-broker-nats-1.internal-tracing-broker-nats:6222",
+      #  "nats://internal-tracing-broker:internal-tracing-broker@internal-tracing-broker-nats-2.internal-tracing-broker-nats:6222"
+      #]
+    }
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: internal-tracing-broker-nats
+  labels:
+    app: internal-tracing-broker-nats
+spec:
+  selector:
+    matchLabels:
+      app: internal-tracing-broker-nats
+  serviceName: "internal-tracing-broker-nats"
+  replicas: 1
+  podManagementPolicy: Parallel
+  template:
+    metadata:
+      labels:
+        app: internal-tracing-broker-nats
+    spec:
+      containers:
+        - name: internal-tracing-broker-nats
+          image: nats:2.9.17-alpine
+          ports:
+            - containerPort: 4222
+              name: client
+            - containerPort: 6222
+              name: cluster
+            - containerPort: 8222
+              name: monitor
+          command:
+            - "nats-server"
+            - "--config"
+            - "/etc/nats-config/nats.conf"
+          volumeMounts:
+            - name: config-volume
+              mountPath: /etc/nats-config
+          livenessProbe:
+            httpGet:
+              path: /
+              port: 8222
+            initialDelaySeconds: 10
+            timeoutSeconds: 5
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 8222
+            initialDelaySeconds: 10
+            timeoutSeconds: 5
+      volumes:
+        - name: config-volume
+          configMap:
+            name: internal-tracing-broker-nats-config
+---
+# Headless service for StatefulSet DNS entries
+apiVersion: v1
+kind: Service
+metadata:
+  name: internal-tracing-broker-nats
+  labels:
+    app: internal-tracing-broker-nats
+spec:
+  selector:
+    app: internal-tracing-broker-nats
+  clusterIP: None
+  ports:
+    - port: 4222
+      name: client
+    - port: 6222
+      name: cluster
+    - port: 8222
+      name: monitor
+---
+# Client service for accessing NATS
+apiVersion: v1
+kind: Service
+metadata:
+  name: internal-tracing-broker-nats-client
+  labels:
+    app: internal-tracing-broker-nats
+spec:
+  selector:
+    app: internal-tracing-broker-nats
+  type: ClusterIP
+  ports:
+    - port: 4222
+      targetPort: 4222
+      name: client
+    - port: 8222
+      targetPort: 8222
+      name: monitor
